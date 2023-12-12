@@ -4,9 +4,32 @@ import utils
 
 from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.layers import Input, ConvLSTM2D, Conv2D, Conv2DTranspose, Conv3D, BatchNormalization, Flatten, Dense, Dropout, Lambda, Reshape
-from tensorflow.keras.layers import BatchNormalization, Activation, SeparableConv2D, MaxPooling2D, UpSampling2D, LSTM, GRU, add, LeakyReLU
+from tensorflow.keras.layers import BatchNormalization, Activation, SeparableConv2D, MaxPooling2D, UpSampling2D, LSTM, GRU, add, LeakyReLU, Concatenate
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, LearningRateScheduler
 from tensorflow.keras.optimizers import Adam, Adadelta
+
+
+def encoder(inputs, filters, pool_size):
+    conv_pool = Conv2D(filters, (3, 3), padding='same')(inputs)
+    conv_pool = BatchNormalization()(conv_pool)
+    conv_pool = Activation('relu')(conv_pool)
+
+    conv_pool = Conv2D(filters, (3, 3), padding='same')(conv_pool)
+    conv_pool = BatchNormalization()(conv_pool)
+    conv_pool = Activation('relu')(conv_pool)
+    conv_pool = MaxPooling2D(pool_size=pool_size)(conv_pool)
+    return conv_pool
+
+def decoder(inputs, concat_input, filters, transpose_size):
+    up = Concatenate()([Conv2DTranspose(filters, transpose_size, strides=(2, 2), padding='same')(inputs), concat_input])
+    up = Conv2D(filters, (3, 3), padding='same')(up)
+    up = BatchNormalization()(up)
+    up = Activation('relu')(up)
+
+    up = Conv2D(filters, (3, 3), padding='same')(up)
+    up = BatchNormalization()(up)
+    up = Activation('relu')(up)
+    return up
 
 class Unet:
     def __init__(self, dfbio, images_list):
@@ -16,6 +39,7 @@ class Unet:
         self.channels = 1
 
         lr_scheduler_callback = LearningRateScheduler(utils.lr_scheduler_conv)
+        early_stopping = EarlyStopping(monitor='val_loss', patience=100, verbose=1, restore_best_weights=True)
         self.callbacks = [lr_scheduler_callback]
 
     def prepare_data(self, seq_length=1, fit=False):
@@ -37,44 +61,21 @@ class Unet:
     def get_model(self):
         inputs = Input(shape=(self.height, self.width, self.channels))
 
-        x = Conv2D(32, 5, strides=2, padding="same")(inputs)
+        x = Conv2D(16, (3, 3), padding='same')(inputs)
         x = BatchNormalization()(x)
-        x = Activation("relu")(x)
+        x = Activation('relu')(x)
 
-        previous_block_activation = x  
+        e1 = encoder(x, 32, (2,2))
+        e2 = encoder(e1, 64, (2,2))
 
-        for filters in [64]:
-            x = Activation("relu")(x)
-            x = SeparableConv2D(filters, 3, padding="same")(x)
-            x = BatchNormalization()(x)
+        bridge = Conv2D(128, (3, 3), padding='same')(e2)
+        bridge = BatchNormalization()(bridge)
+        bridge = Activation('relu')(bridge)
 
-            x = Activation("relu")(x)
-            x = SeparableConv2D(filters, 3, padding="same")(x)
-            x = BatchNormalization()(x)
+        u1 = decoder(bridge, e1, 64, (2,2))
+        u2 = decoder(u1, x, 32, (2,2))
 
-            x = MaxPooling2D(3, strides=2, padding="same")(x)
-
-            residual = Conv2D(filters, 1, strides=2, padding="same")(previous_block_activation)
-            x = add([x, residual])  
-            previous_block_activation = x  
-
-        for filters in [64, 32]:
-            x = Activation("relu")(x)
-            x = Conv2DTranspose(filters, 3, padding="same")(x)
-            x = BatchNormalization()(x)
-
-            x = Activation("relu")(x)
-            x = Conv2DTranspose(filters, 3, padding="same")(x)
-            x = BatchNormalization()(x)
-
-            x = UpSampling2D(2)(x)
-
-            residual = UpSampling2D(2)(previous_block_activation)
-            residual = Conv2D(filters, 1, padding="same")(residual)
-            x = add([x, residual]) 
-            previous_block_activation = x 
-
-        x = Conv2D(1, 5, activation="relu", padding="same")(previous_block_activation)
+        x = Conv2D(1, (1, 1), padding='same', activation='relu')(u2)
 
         multiply_layer = Lambda(lambda tensors: tensors[0] * tensors[1], output_shape=(self.height, self.width, self.channels))
         mask = utils.get_mask(self.dfbio, self.height, self.width, self.channels)
@@ -88,7 +89,7 @@ class Unet:
     def eval(self, X_train, y_train, X_val, y_val):
         self.model = self.get_model()
 
-        self.history = self.model.fit(X_train, y_train, epochs=300, batch_size=1, verbose=1, validation_data=(X_val, y_val), callbacks=[self.callbacks])
+        self.history = self.model.fit(X_train, y_train, epochs=200, batch_size=3, verbose=1, validation_data=(X_val, y_val), callbacks=[self.callbacks])
 
         self.val_loss = self.model.evaluate(X_val,y_val)
 
@@ -99,7 +100,7 @@ class Unet:
     def fit(self, X_train, y_train):
         self.model = self.get_model()
 
-        self.history = self.model.fit(X_train, y_train, epochs=300, batch_size=1, verbose=1, callbacks=[self.callbacks])
+        self.history = self.model.fit(X_train, y_train, epochs=200, batch_size=4, verbose=1, callbacks=[self.callbacks])
 
         self.train_loss = self.model.evaluate(X_train,y_train)
 
@@ -128,6 +129,7 @@ class LSTM_3 :
         self.dfbio_t = utils.get_dfbio_ts(dfbio)
 
         lr_scheduler_callback = LearningRateScheduler(utils.lr_scheduler_lstm)
+        early_stopping = EarlyStopping(monitor='val_loss', patience=150, verbose=1, restore_best_weights=True)
         self.callbacks = [lr_scheduler_callback]
 
 
@@ -229,15 +231,15 @@ class ConvLSTM_3:
 
         x = ConvLSTM2D(filters=64, kernel_size=(5, 5), padding='same', return_sequences=True)(inputs)
         x = BatchNormalization()(x)
-        x = LeakyReLU(0.1)(x)
+        x = Activation('relu')(x)
         x = ConvLSTM2D(filters=64, kernel_size=(3, 3), padding='same', return_sequences=True)(x)
         x = BatchNormalization()(x)
-        x = LeakyReLU(0.1)(x)
+        x = Activation('relu')(x)
         x = ConvLSTM2D(filters=64, kernel_size=(1, 1), padding='same', return_sequences=False)(x)
         x = BatchNormalization()(x)
-        x = LeakyReLU(0.1)(x)
+        x = Activation('relu')(x)
 
-        x = Conv2D(filters=self.channels, kernel_size=(1,1), activation='linear', padding='valid')(x)
+        x = Conv2D(filters=self.channels, kernel_size=(1,1), activation='relu', padding='valid')(x)
 
         multiply_layer = Lambda(lambda tensors: tensors[0] * tensors[1], output_shape=(self.height, self.width, self.channels))
         mask = utils.get_mask(self.dfbio, self.height, self.width, self.channels)
