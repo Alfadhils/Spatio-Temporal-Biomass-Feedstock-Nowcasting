@@ -89,7 +89,7 @@ class Unet:
     def eval(self, X_train, y_train, X_val, y_val):
         self.model = self.get_model()
 
-        self.history = self.model.fit(X_train, y_train, epochs=200, batch_size=3, verbose=1, validation_data=(X_val, y_val), callbacks=[self.callbacks])
+        self.history = self.model.fit(X_train, y_train, epochs=250, batch_size=3, verbose=1, validation_data=(X_val, y_val), callbacks=[self.callbacks])
 
         self.val_loss = self.model.evaluate(X_val,y_val)
 
@@ -100,7 +100,7 @@ class Unet:
     def fit(self, X_train, y_train):
         self.model = self.get_model()
 
-        self.history = self.model.fit(X_train, y_train, epochs=200, batch_size=4, verbose=1, callbacks=[self.callbacks])
+        self.history = self.model.fit(X_train, y_train, epochs=250, batch_size=4, verbose=1, callbacks=[self.callbacks])
 
         self.train_loss = self.model.evaluate(X_train,y_train)
 

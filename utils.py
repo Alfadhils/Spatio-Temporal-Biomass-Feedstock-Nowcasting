@@ -67,7 +67,7 @@ def lr_scheduler_lstm(epoch, initial_lr=0.001, drop_factor=0.5, epochs_drop=[100
     else:
         return initial_lr
     
-def lr_scheduler_conv(epoch, initial_lr=0.01, drop_factor=0.5, epochs_drop=[50, 100, 150]):
+def lr_scheduler_conv(epoch, initial_lr=0.01, drop_factor=0.5, epochs_drop=[50, 100, 150, 200]):
     if epoch in epochs_drop:
         new_lr = initial_lr * drop_factor
         print(f'Learning rate changed to {new_lr} for epoch {epoch+1}')
